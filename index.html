@@ -715,8 +715,37 @@ float brushWeight(vec2 uv){float influence=0.;for(int i=0;i<12;i++){vec2 d=(uv-b
 uniform float mode,time,strength,viscosity,scale,reflectivity,opacity,ripple,hueShift,brightness,edgeMode,softness,edgeStrength;${colourGLSL}
 float surfaceHash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*4375.85);}
 float surfaceNoise(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);return mix(mix(surfaceHash(i),surfaceHash(i+vec2(1.,0.)),f.x),mix(surfaceHash(i+vec2(0.,1.)),surfaceHash(i+vec2(1.)),f.x),f.y);}
+// The photograph itself is displaced by the dust trail; the alpha stays intact.
+uniform float brushActive;
+vec2 dustDisplacement(vec2 uv){
+ if(brushActive<.5)return vec2(0.);
+ float radius=max(.012,brushRadius);
+ float total=0.;vec2 shift=vec2(0.);
+ vec2 previous=brush[0].xy;
+ for(int i=0;i<12;i++){
+  vec4 stamp=brush[i];
+  vec2 travel=(stamp.xy-previous)*vec2(brushAspect,1.);
+  previous=stamp.xy;
+  if(stamp.w<.0001)continue;
+  vec2 offset=(uv-stamp.xy)*vec2(brushAspect,1.);
+  float d=length(offset);
+  float force=stamp.w*exp(-2.0*d*d/(radius*radius));
+  vec2 radial=offset/(d+.018);
+  vec2 sweep=travel/(length(travel)+radius*.24);
+  vec2 turn=vec2(-radial.y,radial.x);
+  shift+=force*(radial*.050+sweep*.030+turn*.009);
+  total+=force;
+ }
+ if(total<.0001)return vec2(0.);
+ float influence=1.-exp(-total*.75);
+ vec2 cell=floor(uv*vec2(280.,280.));
+ vec2 grain=vec2(surfaceHash(cell+vec2(3.7,1.1)),surfaceHash(cell+vec2(8.2,5.6)))-.5;
+ float edge=min(min(uv.x,uv.y),min(1.-uv.x,1.-uv.y));
+ float boundary=smoothstep(0.,.065,edge);
+ return boundary*(shift/(1.+total*.65)/vec2(brushAspect,1.)+grain*.014*influence);
+}
 vec3 spectrum(float x){return .5+.5*cos(vec3(0.,2.1,4.2)+x);}
-void main(){vec2 p=uv;float dustForce=brushWeight(uv);p+=vec2(sin(uv.y*93.+uv.x*31.+time*1.5),cos(uv.x*91.-uv.y*27.-time*1.3))*(.004*dustForce);float wave=0.;float tt=time/(viscosity+.2);if(mode>.5&&mode<4.5){vec2 q=uv-.5;wave=sin(length(q)*scale*24.-tt*3.)*cos(atan(q.y,q.x)*3.+tt*.65);p+=strength*vec2(sin(uv.y*scale*13.+tt)*.025+wave*.03,cos(uv.x*scale*13.-tt)*.025+wave*.03);}
+void main(){vec2 p=clamp(uv-dustDisplacement(uv),vec2(.00001),vec2(.99999));float wave=0.;float tt=time/(viscosity+.2);if(mode>.5&&mode<4.5){vec2 q=uv-.5;wave=sin(length(q)*scale*24.-tt*3.)*cos(atan(q.y,q.x)*3.+tt*.65);p+=strength*vec2(sin(uv.y*scale*13.+tt)*.025+wave*.03,cos(uv.x*scale*13.-tt)*.025+wave*.03);}
 float detail=scale*.6+1.;float field=0.;float amount=clamp(strength*.65,0.,1.);float edge=smoothstep(0.,.1,min(min(uv.x,uv.y),min(1.-uv.x,1.-uv.y)));
 if(mode>4.5&&mode<5.5){field=sin(uv.y*detail*9.+sin(uv.x*detail*5.+tt*.6)*2.+tt*.8);p+=vec2(field,cos(uv.x*detail*8.-tt*.7))*.025*amount*edge;}
 else if(mode>5.5&&mode<6.5){field=sin(uv.x*detail*14.+uv.y*8.+sin(uv.y*16.-tt)*1.5+tt*.7);p+=vec2(field,-field)*.008*amount*edge;}
@@ -736,7 +765,7 @@ if(edgeMode>.5&&edgeMode<1.5)c.a*=mix(1.,smoothstep(0.,max(.02,softness),uv.x),e
  if(edgeMode>1.5&&edgeMode<2.5)c.a*=mix(1.,smoothstep(0.,max(.001,softness*.5),min(min(uv.x,1.-uv.x),min(uv.y,1.-uv.y))),edgeStrength);
  if(edgeMode>2.5)c.rgb+=edgeStrength*vec3(1.,.32,.08)*exp(-3.*length(uv-vec2(.04,.83)));
  gl_FragColor=vec4(shiftHue(c.rgb,hueShift)*brightness,c.a*opacity);}`);
-const pl=Object.fromEntries(['wakeSegments[0]','wakeWeights[0]','wakeCount','wakeStrength','brush[0]','brushRadius','brushAspect','cursor','cursorKind','cursorRadius','cursorAspect','cursorFlow','projection','view','dimensions','photograph','edgeMode','edgeStrength','softness','hueShift','brightness','mode','time','strength','viscosity','scale','reflectivity','opacity','ripple'].map(k=>[k,gl.getUniformLocation(photoProg,k)])),corner=gl.getAttribLocation(photoProg,'corner'),quad=gl.createBuffer();let texture=gl.createTexture(),originalTexture=gl.createTexture();
+const pl=Object.fromEntries(['wakeSegments[0]','wakeWeights[0]','wakeCount','wakeStrength','brush[0]','brushRadius','brushAspect','brushActive','cursor','cursorKind','cursorRadius','cursorAspect','cursorFlow','projection','view','dimensions','photograph','edgeMode','edgeStrength','softness','hueShift','brightness','mode','time','strength','viscosity','scale','reflectivity','opacity','ripple'].map(k=>[k,gl.getUniformLocation(photoProg,k)])),corner=gl.getAttribLocation(photoProg,'corner'),quad=gl.createBuffer();let texture=gl.createTexture(),originalTexture=gl.createTexture();
 const photoMesh=[];const meshSegments=72;for(let y=0;y<meshSegments;y++)for(let x=0;x<meshSegments;x++){const x0=x/meshSegments*2-1,x1=(x+1)/meshSegments*2-1,y0=y/meshSegments*2-1,y1=(y+1)/meshSegments*2-1;photoMesh.push(x0,y0,x1,y0,x0,y1,x0,y1,x1,y0,x1,y1);}gl.bindBuffer(gl.ARRAY_BUFFER,quad);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(photoMesh),gl.STATIC_DRAW);
 let photoWidth=2,photoHeight=1.5,sourceWidth=2,sourceHeight=1.5;
 function uploadTexture(img,textureTarget=texture){const limit=Math.min(gl.getParameter(gl.MAX_TEXTURE_SIZE),4096),ratio=Math.min(1,limit/Math.max(img.width,img.height));let source=img;if(ratio<1){source=document.createElement('canvas');source.width=Math.max(1,Math.round(img.width*ratio));source.height=Math.max(1,Math.round(img.height*ratio));source.getContext('2d').drawImage(img,0,0,source.width,source.height);}gl.bindTexture(gl.TEXTURE_2D,textureTarget);gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,true);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,source);}
@@ -784,7 +813,7 @@ function setCursorUniforms(loc,view,proj){gl.uniform3f(loc.cursor,hover.x,hover.
  gl.uniform1f(loc.cursorKind,kind);
  if(kind===1 && loc['wakeWeights[0]']) uploadWake(loc);
  gl.uniform1f(loc.cursorAspect,outputAspect());}
-function drawPhoto(proj,view,opacity,original=false){if(opacity<.001)return;gl.useProgram(photoProg);gl.uniform4fv(pl['brush[0]'],brushData);gl.uniform1f(pl.brushRadius,effectiveBrushRadius());gl.uniform1f(pl.brushAspect,photoWidth/photoHeight);setCursorUniforms(pl,view,proj);applyLayerBlend();gl.bindBuffer(gl.ARRAY_BUFFER,quad);gl.enableVertexAttribArray(corner);gl.vertexAttribPointer(corner,2,gl.FLOAT,false,0,0);gl.uniformMatrix4fv(pl.projection,false,proj);gl.uniformMatrix4fv(pl.view,false,view);gl.uniform2f(pl.dimensions,photoWidth,photoHeight);gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,texture);gl.uniform1i(pl.photograph,0);gl.uniform1f(pl.edgeMode,original?0:({gradient:1,feather:2,'light-leak':3}[settings.blendMode]||0));gl.uniform1f(pl.softness,settings.feather);gl.uniform1f(pl.edgeStrength,settings.blendStrength);gl.uniform1f(pl.hueShift,original?0:settings.hue);gl.uniform1f(pl.brightness,original?1:settings.brightness);gl.uniform1f(pl.mode,['none','water','gel','chrome','iridescent','glassflow','holofoil','opalstone','aurorasilk','lavaveins','prismwave'].indexOf(settings.liquidMode));gl.uniform1f(pl.time,clock);gl.uniform1f(pl.strength,settings.liquidStrength*(1+energy*.7+beat*.5));gl.uniform1f(pl.viscosity,settings.viscosity);gl.uniform1f(pl.scale,settings.rippleScale);gl.uniform1f(pl.reflectivity,settings.reflectivity);gl.uniform1f(pl.opacity,opacity);gl.uniform1f(pl.ripple,original?2:Math.min(2,(clock-rippleStart)/Math.max(1.8,settings.duration)));gl.drawArrays(gl.TRIANGLES,0,photoMesh.length/2);gl.disableVertexAttribArray(corner);}
+function drawPhoto(proj,view,opacity,original=false){if(opacity<.001)return;gl.useProgram(photoProg);gl.uniform4fv(pl['brush[0]'],brushData);gl.uniform1f(pl.brushActive,settings.cursorReact&&settings.cursorDistortion==='dust'&&brushTrail.length?1:0);gl.uniform1f(pl.brushRadius,effectiveBrushRadius());gl.uniform1f(pl.brushAspect,photoWidth/photoHeight);setCursorUniforms(pl,view,proj);applyLayerBlend();gl.bindBuffer(gl.ARRAY_BUFFER,quad);gl.enableVertexAttribArray(corner);gl.vertexAttribPointer(corner,2,gl.FLOAT,false,0,0);gl.uniformMatrix4fv(pl.projection,false,proj);gl.uniformMatrix4fv(pl.view,false,view);gl.uniform2f(pl.dimensions,photoWidth,photoHeight);gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,texture);gl.uniform1i(pl.photograph,0);gl.uniform1f(pl.edgeMode,original?0:({gradient:1,feather:2,'light-leak':3}[settings.blendMode]||0));gl.uniform1f(pl.softness,settings.feather);gl.uniform1f(pl.edgeStrength,settings.blendStrength);gl.uniform1f(pl.hueShift,original?0:settings.hue);gl.uniform1f(pl.brightness,original?1:settings.brightness);gl.uniform1f(pl.mode,['none','water','gel','chrome','iridescent','glassflow','holofoil','opalstone','aurorasilk','lavaveins','prismwave'].indexOf(settings.liquidMode));gl.uniform1f(pl.time,clock);gl.uniform1f(pl.strength,settings.liquidStrength*(1+energy*.7+beat*.5));gl.uniform1f(pl.viscosity,settings.viscosity);gl.uniform1f(pl.scale,settings.rippleScale);gl.uniform1f(pl.reflectivity,settings.reflectivity);gl.uniform1f(pl.opacity,opacity);gl.uniform1f(pl.ripple,original?2:Math.min(2,(clock-rippleStart)/Math.max(1.8,settings.duration)));gl.drawArrays(gl.TRIANGLES,0,photoMesh.length/2);gl.disableVertexAttribArray(corner);}
 function render(){$('timelineHold').textContent='Original · '+settings.hold+'s';$('timelineFlow').textContent='Transform / flow · '+(settings.duration+settings.scatterHold).toFixed(1)+'s';$('timelineReform').textContent='Reform · '+settings.duration+'s';$('timelineTotal').textContent='Cycle '+(settings.hold+settings.duration*2+settings.scatterHold).toFixed(1)+'s';resize();
  const frame=frameRect(canvas.width,canvas.height,outputAspect());
  for(const c of [surface,mixed,stack]){if(c.width!==frame.width)c.width=frame.width;if(c.height!==frame.height)c.height=frame.height;}
@@ -841,8 +870,8 @@ void main(){
   motion+=strength*(radial*.56+sweep*.55+grain*.33+turn*(seed-.5)*.22);
   total+=strength;
  }
- amount=1.-exp(-total*.75);
- vec2 drift=motion/(1.+total*.52)*(radius*2.*dimensions.y*.88);
+ amount=1.-exp(-total*1.18);
+ vec2 drift=motion/(1.+total*.45)*(radius*2.*dimensions.y*1.24);
  vec3 pos=position+vec3(drift,sin(angle*1.7)*amount*radius*dimensions.y*.24);
  vec4 p=view*vec4(pos,1.);gl_Position=projection*p;
  gl_PointSize=clamp(brushPointSize*7./max(1.,-p.z),1.,24.);
@@ -877,7 +906,7 @@ function tickBrush(dt){
   brushData.set([p.u,p.v,age,p.power*attack*release],i*4);
  });
 }
-function drawBrush(proj,view,opacity,height){if(!n||opacity<.001||!brushTrail.length)return;gl.useProgram(brushProg);gl.uniformMatrix4fv(bl.projection,false,proj);gl.uniformMatrix4fv(bl.view,false,view);gl.uniform2f(bl.dimensions,photoWidth,photoHeight);gl.uniform4fv(bl['brush[0]'],brushData);gl.uniform1f(bl.brushRadius,effectiveBrushRadius());gl.uniform1f(bl.brushAspect,photoWidth/photoHeight);gl.uniform1f(bl.brushTime,clock);gl.uniform1f(bl.brushOpacity,opacity);gl.uniform1f(bl.brushPointSize,Math.max(1.2,Math.min(3,settings.size*height/900*.85)));gl.uniform1f(bl.material,2);gl.uniform1f(bl.photoColours,1);gl.uniform1f(bl.textureDetail,settings.textureDetail);gl.uniform1f(bl.materialTime,t);gl.uniform1f(bl.glow,Math.min(.55,settings.glow));gl.uniform1f(bl.opacity,1);gl.uniform1f(bl.hueShift,settings.hue);gl.uniform1f(bl.brightness,settings.brightness);gl.uniform1f(bl.cohesion,0);gl.bindBuffer(gl.ARRAY_BUFFER,colorBuf);gl.enableVertexAttribArray(brushTint);gl.vertexAttribPointer(brushTint,3,gl.FLOAT,false,0,0);gl.bindBuffer(gl.ARRAY_BUFFER,brushBuffer);gl.enableVertexAttribArray(brushPos);gl.vertexAttribPointer(brushPos,3,gl.FLOAT,false,0,0);applyLayerBlend();for(let layer=0;layer<3;layer++){gl.uniform1f(bl.brushLayer,layer);gl.drawArrays(gl.POINTS,0,n);}gl.disableVertexAttribArray(brushPos);gl.disableVertexAttribArray(brushTint);}
+function drawBrush(proj,view,opacity,height){if(!n||opacity<.001||!brushTrail.length)return;gl.useProgram(brushProg);gl.uniformMatrix4fv(bl.projection,false,proj);gl.uniformMatrix4fv(bl.view,false,view);gl.uniform2f(bl.dimensions,photoWidth,photoHeight);gl.uniform4fv(bl['brush[0]'],brushData);gl.uniform1f(bl.brushRadius,effectiveBrushRadius());gl.uniform1f(bl.brushAspect,photoWidth/photoHeight);gl.uniform1f(bl.brushTime,clock);gl.uniform1f(bl.brushOpacity,opacity);gl.uniform1f(bl.brushPointSize,Math.max(2.3,Math.min(4.2,settings.size*height/900*1.65)));gl.uniform1f(bl.material,2);gl.uniform1f(bl.photoColours,1);gl.uniform1f(bl.textureDetail,settings.textureDetail);gl.uniform1f(bl.materialTime,t);gl.uniform1f(bl.glow,Math.min(.55,settings.glow));gl.uniform1f(bl.opacity,1);gl.uniform1f(bl.hueShift,settings.hue);gl.uniform1f(bl.brightness,settings.brightness);gl.uniform1f(bl.cohesion,0);gl.bindBuffer(gl.ARRAY_BUFFER,colorBuf);gl.enableVertexAttribArray(brushTint);gl.vertexAttribPointer(brushTint,3,gl.FLOAT,false,0,0);gl.bindBuffer(gl.ARRAY_BUFFER,brushBuffer);gl.enableVertexAttribArray(brushPos);gl.vertexAttribPointer(brushPos,3,gl.FLOAT,false,0,0);applyLayerBlend();for(let layer=0;layer<3;layer++){gl.uniform1f(bl.brushLayer,layer);gl.drawArrays(gl.POINTS,0,n);}gl.disableVertexAttribArray(brushPos);gl.disableVertexAttribArray(brushTint);}
 
 function frame(now){requestAnimationFrame(frame);if(contextLost)return;const dt=last===null?0:Math.max(0,(now-last)/1000);last=now;if(!paused&&!document.hidden){if(sampleRefreshPending&&activePhoto<0&&!transition&&scatterMix===0)loadActive();clock+=dt;advanceGroupCentres(dt);tickLayer(dt);tickSequence();tickPhotoFade();tickLookCycle();tickOtherLayers(dt);}render();if(recording){captureFrame(recording.width,recording.height,recording.aspect);const seconds=(performance.now()-recording.started)/1000;$('recordStatus').textContent='● Recording '+Math.floor(seconds)+'s / 180s · '+(recording.bytes/1e6).toFixed(1)+' MB';if(seconds>=180||recording.bytes>=200e6)stopRecording('Recording limit reached; saving your video.');}}
 const captureCanvas=document.createElement('canvas'),captureCtx=captureCanvas.getContext('2d',{alpha:false});
